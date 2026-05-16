@@ -86,7 +86,8 @@ case "$ENGINE" in
     ;;
 esac
 
-BASENAME=$(basename "$INPUT_FILE" ".$ext_lower")
+BASENAME="${INPUT_FILE##*/}"
+BASENAME="${BASENAME%.$ext_lower}"
 INPUT_FILE_ABS=$(realpath "$INPUT_FILE")
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -124,7 +125,7 @@ if [[ "$ext_lower" == "xapk" ]]; then
 
   echo "Found ${#XAPK_APK_FILES[@]} APK(s) inside XAPK:"
   for f in "${XAPK_APK_FILES[@]}"; do
-    echo "  - $(basename "$f")"
+    echo "  - ${f##*/}"
   done
   echo
 fi
@@ -236,7 +237,7 @@ run_fernflower() {
   java -jar "$ff_jar" "${ff_args[@]}"
 
   # Fernflower outputs a JAR containing .java files — extract it
-  local result_jar="$out_dir/$(basename "$jar_to_decompile")"
+  local result_jar="$out_dir/${jar_to_decompile##*/}"
   if [[ -f "$result_jar" ]]; then
     local sources_dir="$out_dir/sources"
     mkdir -p "$sources_dir"
@@ -349,13 +350,14 @@ if [[ "$ext_lower" == "xapk" ]]; then
   if [[ ${#obb_files[@]} -gt 0 ]]; then
     echo "OBB files found (not decompiled, data-only):"
     for obb in "${obb_files[@]}"; do
-      echo "  - $(basename "$obb") ($(du -h "$obb" | cut -f1))"
+      echo "  - ${obb##*/} ($(du -h "$obb" | cut -f1))"
     done
     echo
   fi
 
   for apk_file in "${XAPK_APK_FILES[@]}"; do
-    apk_name=$(basename "$apk_file" .apk)
+    apk_name="${apk_file##*/}"
+    apk_name="${apk_name%.apk}"
     echo
     echo "======================================================"
     decompile_single "$apk_file" "$OUTPUT_DIR/$apk_name" "$apk_name.apk"

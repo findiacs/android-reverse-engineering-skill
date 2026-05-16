@@ -377,7 +377,8 @@ install_dex2jar() {
   mkdir -p "$HOME/.local/bin"
   for script in "$bin_dir"/d2j-*.sh; do
     local name
-    name=$(basename "$script" .sh)
+    name="${script##*/}"
+    name="${name%.sh}"
     ln -sf "$script" "$HOME/.local/bin/$name"
   done
 
