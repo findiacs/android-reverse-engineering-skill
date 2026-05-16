@@ -86,8 +86,8 @@ case "$ENGINE" in
     ;;
 esac
 
-BASENAME="${INPUT_FILE##*/}"
-BASENAME="${BASENAME%.$ext_lower}"
+_tmp_name="${INPUT_FILE##*/}"
+BASENAME="${_tmp_name%.$ext_lower}"
 INPUT_FILE_ABS=$(realpath "$INPUT_FILE")
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -356,8 +356,8 @@ if [[ "$ext_lower" == "xapk" ]]; then
   fi
 
   for apk_file in "${XAPK_APK_FILES[@]}"; do
-    apk_name="${apk_file##*/}"
-    apk_name="${apk_name%.apk}"
+    _tmp_apk_name="${apk_file##*/}"
+    apk_name="${_tmp_apk_name%.apk}"
     echo
     echo "======================================================"
     decompile_single "$apk_file" "$OUTPUT_DIR/$apk_name" "$apk_name.apk"
