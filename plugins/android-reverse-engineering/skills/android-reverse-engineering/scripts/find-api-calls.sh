@@ -60,6 +60,18 @@ fi
 
 GREP_OPTS="-rn --include=*.java --include=*.kt"
 
+# Optimization: Single-pass over all files to create a smaller cache file
+# Combining all non-case-insensitive patterns and adding global words for auth/constants
+CACHE_FILE=$(mktemp)
+COMBINED_PATTERN='@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\(|@(Headers|Header|Query|QueryMap|Path|Body|Field|FieldMap|Part|PartMap|Url)\s*\(|(baseUrl|base_url)\s*\(|(Request\.Builder|HttpUrl|\.newCall|\.enqueue|addInterceptor|addNetworkInterceptor)|\.url\s*\(|\.addQueryParameter|\.addPathSegment|\.scheme\s*\(|\.host\s*\(|(StringRequest|JsonObjectRequest|JsonArrayRequest|ImageRequest|RequestQueue|Volley\.newRequestQueue)|"https?://[^"]+|(openConnection|setRequestMethod|HttpURLConnection|HttpsURLConnection)|(loadUrl|loadData|evaluateJavascript|addJavascriptInterface|WebViewClient|WebChromeClient)|api[_-]?key|auth[_-]?token|bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token|BASE_URL|API_URL|SERVER_URL|ENDPOINT|API_BASE|HOST_NAME'
+
+# Pre-filter all potentially relevant lines into a temporary file
+# The resulting CACHE_FILE already contains file:line: prefixes
+grep -i $GREP_OPTS -E "$COMBINED_PATTERN" "$SOURCE_DIR" > "$CACHE_FILE" 2>/dev/null || true
+
+# Register cleanup trap to ensure temporary file is removed on exit
+trap 'rm -f "$CACHE_FILE"' EXIT
+
 section() {
   echo
   echo "==== $1 ===="
@@ -68,8 +80,16 @@ section() {
 
 run_grep() {
   local pattern="$1"
+  local opts=""
+
+  if [[ "$pattern" == "-i" ]]; then
+    opts="-i"
+    pattern="$2"
+  fi
+
+  # Search within the pre-filtered cache file instead of scanning all files again
   # shellcheck disable=SC2086
-  grep $GREP_OPTS -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
+  grep $opts -E "$pattern" "$CACHE_FILE" 2>/dev/null || true
 }
 
 # --- Retrofit ---
