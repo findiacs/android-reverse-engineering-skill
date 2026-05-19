@@ -1,4 +1,3 @@
-
-## 2024-05-16 - [Optimize basename in bash loops]
-**Learning:** Calling the external command `basename` inside loops in shell scripts creates significant subshell process-forking overhead.
-**Action:** Use native bash parameter expansion (e.g., `${var##*/}` for basename, and `${var%.ext}` to remove extensions) to achieve the same result orders of magnitude faster.
+## 2024-05-19 - Optimizing bash grep searches
+**Learning:** Running multiple independent `grep` commands over a large directory tree of source files incurs significant I/O overhead.
+**Action:** When performing multiple pattern searches in bash scripts over large directories, combine the regex patterns using `|` to do a single-pass `grep` into a temporary file (`mktemp -t`). Then, run the individual specific `grep` queries against this much smaller cache file. This drastically reduces the execution time. Also, to maintain DRY principles, build the combined regex dynamically from an array of the specific patterns rather than hardcoding a duplicate giant regex string.
