@@ -58,7 +58,30 @@ if [[ ! -d "$SOURCE_DIR" ]]; then
   exit 1
 fi
 
-GREP_OPTS="-rn --include=*.java --include=*.kt"
+# Build combined regex for single-pass scan
+PATTERNS=(
+  '@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\('
+  '@(Headers|Header|Query|QueryMap|Path|Body|Field|FieldMap|Part|PartMap|Url)\s*\('
+  '(baseUrl|base_url)\s*\('
+  '(Request\.Builder|HttpUrl|\.newCall|\.enqueue|addInterceptor|addNetworkInterceptor)'
+  '(\.url\s*\(|\.addQueryParameter|\.addPathSegment|\.scheme\s*\(|\.host\s*\()'
+  '(StringRequest|JsonObjectRequest|JsonArrayRequest|ImageRequest|RequestQueue|Volley\.newRequestQueue)'
+  '"https?://[^"]+'
+  '(openConnection|setRequestMethod|HttpURLConnection|HttpsURLConnection)'
+  '(loadUrl|loadData|evaluateJavascript|addJavascriptInterface|WebViewClient|WebChromeClient)'
+  '(api[_-]?key|auth[_-]?token|bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token)'
+  '(BASE_URL|API_URL|SERVER_URL|ENDPOINT|API_BASE|HOST_NAME)'
+)
+
+IFS="|"
+COMBINED_REGEX="${PATTERNS[*]}"
+unset IFS
+
+CACHE_FILE=$(mktemp)
+trap 'rm -f "$CACHE_FILE"' EXIT
+
+# Do a single pass to cache all potential matches
+grep -rn --include=*.java --include=*.kt -iE "$COMBINED_REGEX" "$SOURCE_DIR" > "$CACHE_FILE" 2>/dev/null || true
 
 section() {
   echo
@@ -67,9 +90,17 @@ section() {
 }
 
 run_grep() {
-  local pattern="$1"
-  # shellcheck disable=SC2086
-  grep $GREP_OPTS -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
+  local flags=""
+  local pattern=""
+
+  if [[ "$1" == "-i" ]]; then
+    flags="-i"
+    pattern="$2"
+  else
+    pattern="$1"
+  fi
+
+  grep -E $flags "$pattern" "$CACHE_FILE" 2>/dev/null || true
 }
 
 # --- Retrofit ---
