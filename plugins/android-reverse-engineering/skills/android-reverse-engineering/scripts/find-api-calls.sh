@@ -60,6 +60,55 @@ fi
 
 GREP_OPTS="-rn --include=*.java --include=*.kt"
 
+# --- Performance Optimization ---
+# To avoid multiple full directory scans via grep, we build a combined regex of all
+# possible patterns. We run a single case-insensitive search over the directory,
+# saving matching lines to a temporary cache file. Then, individual section greps
+# are executed against this much smaller cache file, significantly reducing I/O overhead.
+
+# Create a temporary file securely
+TMP_CACHE=$(mktemp)
+# Ensure temporary file is cleaned up on exit
+trap 'rm -f "$TMP_CACHE"' EXIT
+
+# Build the combined regex dynamically to maintain DRY principles
+PATTERNS=()
+if [[ "$SEARCH_ALL" == true || "$SEARCH_RETROFIT" == true ]]; then
+  PATTERNS+=('@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\(')
+  PATTERNS+=('@(Headers|Header|Query|QueryMap|Path|Body|Field|FieldMap|Part|PartMap|Url)\s*\(')
+  PATTERNS+=('(baseUrl|base_url)\s*\(')
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_OKHTTP" == true ]]; then
+  PATTERNS+=('(Request\.Builder|HttpUrl|\.newCall|\.enqueue|addInterceptor|addNetworkInterceptor)')
+  PATTERNS+=('(\.url\s*\(|\.addQueryParameter|\.addPathSegment|\.scheme\s*\(|\.host\s*\()')
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_VOLLEY" == true ]]; then
+  PATTERNS+=('(StringRequest|JsonObjectRequest|JsonArrayRequest|ImageRequest|RequestQueue|Volley\.newRequestQueue)')
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_URLS" == true ]]; then
+  PATTERNS+=('"https?://[^"]+')
+  PATTERNS+=('(openConnection|setRequestMethod|HttpURLConnection|HttpsURLConnection)')
+  PATTERNS+=('(loadUrl|loadData|evaluateJavascript|addJavascriptInterface|WebViewClient|WebChromeClient)')
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_AUTH" == true ]]; then
+  PATTERNS+=('(api[_-]?key|auth[_-]?token|bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token)')
+  PATTERNS+=('(BASE_URL|API_URL|SERVER_URL|ENDPOINT|API_BASE|HOST_NAME)')
+fi
+
+# Join patterns with OR operator '|'
+COMBINED_REGEX=$(IFS='|'; echo "${PATTERNS[*]}")
+
+# Perform a single pass scan into the temp file.
+# Note: Since auth search might be case insensitive, we use -i for the combined search.
+if [[ -n "$COMBINED_REGEX" ]]; then
+  # shellcheck disable=SC2086
+  grep $GREP_OPTS -E -i "$COMBINED_REGEX" "$SOURCE_DIR" > "$TMP_CACHE" 2>/dev/null || true
+fi
+
 section() {
   echo
   echo "==== $1 ===="
@@ -68,50 +117,58 @@ section() {
 
 run_grep() {
   local pattern="$1"
-  # shellcheck disable=SC2086
-  grep $GREP_OPTS -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
+  local is_case_insensitive="${2:-false}"
+
+  # Only run grep if the cache file is not empty
+  if [[ -s "$TMP_CACHE" ]]; then
+    if [[ "$is_case_insensitive" == "true" ]]; then
+      grep -E -i "$pattern" "$TMP_CACHE" || true
+    else
+      grep -E "$pattern" "$TMP_CACHE" || true
+    fi
+  fi
 }
 
 # --- Retrofit ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_RETROFIT" == true ]]; then
   section "Retrofit Annotations"
-  run_grep '@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\('
+  run_grep '@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\(' false
   section "Retrofit Headers & Parameters"
-  run_grep '@(Headers|Header|Query|QueryMap|Path|Body|Field|FieldMap|Part|PartMap|Url)\s*\('
+  run_grep '@(Headers|Header|Query|QueryMap|Path|Body|Field|FieldMap|Part|PartMap|Url)\s*\(' false
   section "Retrofit Base URL"
-  run_grep '(baseUrl|base_url)\s*\('
+  run_grep '(baseUrl|base_url)\s*\(' false
 fi
 
 # --- OkHttp ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_OKHTTP" == true ]]; then
   section "OkHttp Request Building"
-  run_grep '(Request\.Builder|HttpUrl|\.newCall|\.enqueue|addInterceptor|addNetworkInterceptor)'
+  run_grep '(Request\.Builder|HttpUrl|\.newCall|\.enqueue|addInterceptor|addNetworkInterceptor)' false
   section "OkHttp URL Construction"
-  run_grep '(\.url\s*\(|\.addQueryParameter|\.addPathSegment|\.scheme\s*\(|\.host\s*\()'
+  run_grep '(\.url\s*\(|\.addQueryParameter|\.addPathSegment|\.scheme\s*\(|\.host\s*\()' false
 fi
 
 # --- Volley ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_VOLLEY" == true ]]; then
   section "Volley Requests"
-  run_grep '(StringRequest|JsonObjectRequest|JsonArrayRequest|ImageRequest|RequestQueue|Volley\.newRequestQueue)'
+  run_grep '(StringRequest|JsonObjectRequest|JsonArrayRequest|ImageRequest|RequestQueue|Volley\.newRequestQueue)' false
 fi
 
 # --- Hardcoded URLs ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_URLS" == true ]]; then
   section "Hardcoded URLs (http:// and https://)"
-  run_grep '"https?://[^"]+'
+  run_grep '"https?://[^"]+' false
   section "HttpURLConnection"
-  run_grep '(openConnection|setRequestMethod|HttpURLConnection|HttpsURLConnection)'
+  run_grep '(openConnection|setRequestMethod|HttpURLConnection|HttpsURLConnection)' false
   section "WebView URLs"
-  run_grep '(loadUrl|loadData|evaluateJavascript|addJavascriptInterface|WebViewClient|WebChromeClient)'
+  run_grep '(loadUrl|loadData|evaluateJavascript|addJavascriptInterface|WebViewClient|WebChromeClient)' false
 fi
 
 # --- Auth patterns ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_AUTH" == true ]]; then
   section "Authentication & API Keys"
-  run_grep -i '(api[_-]?key|auth[_-]?token|bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token)'
+  run_grep '(api[_-]?key|auth[_-]?token|bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token)' true
   section "Base URLs and Constants"
-  run_grep -i '(BASE_URL|API_URL|SERVER_URL|ENDPOINT|API_BASE|HOST_NAME)'
+  run_grep '(BASE_URL|API_URL|SERVER_URL|ENDPOINT|API_BASE|HOST_NAME)' true
 fi
 
 echo
