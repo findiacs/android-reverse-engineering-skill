@@ -60,19 +60,82 @@ fi
 
 GREP_OPTS="-rn --include=*.java --include=*.kt"
 
+# First pass: collect patterns
+PATTERNS=()
+
+add_pattern() {
+  local pattern="$1"
+  PATTERNS+=("$pattern")
+}
+
+# --- Collection Phase ---
+if [[ "$SEARCH_ALL" == true || "$SEARCH_RETROFIT" == true ]]; then
+  add_pattern '@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\('
+  add_pattern '@(Headers|Header|Query|QueryMap|Path|Body|Field|FieldMap|Part|PartMap|Url)\s*\('
+  add_pattern '(baseUrl|base_url)\s*\('
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_OKHTTP" == true ]]; then
+  add_pattern '(Request\.Builder|HttpUrl|\.newCall|\.enqueue|addInterceptor|addNetworkInterceptor)'
+  add_pattern '(\.url\s*\(|\.addQueryParameter|\.addPathSegment|\.scheme\s*\(|\.host\s*\()'
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_VOLLEY" == true ]]; then
+  add_pattern '(StringRequest|JsonObjectRequest|JsonArrayRequest|ImageRequest|RequestQueue|Volley\.newRequestQueue)'
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_URLS" == true ]]; then
+  add_pattern '"https?://[^"]+'
+  add_pattern '(openConnection|setRequestMethod|HttpURLConnection|HttpsURLConnection)'
+  add_pattern '(loadUrl|loadData|evaluateJavascript|addJavascriptInterface|WebViewClient|WebChromeClient)'
+fi
+
+if [[ "$SEARCH_ALL" == true || "$SEARCH_AUTH" == true ]]; then
+  add_pattern '(api[_-]?key|auth[_-]?token|bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token)'
+  add_pattern '(BASE_URL|API_URL|SERVER_URL|ENDPOINT|API_BASE|HOST_NAME)'
+fi
+
+if [[ ${#PATTERNS[@]} -eq 0 ]]; then
+  echo "No search patterns selected."
+  exit 0
+fi
+
+COMBINED_PATTERN=$(IFS='|'; echo "${PATTERNS[*]}")
+
+CACHE_FILE=$(mktemp -t api_calls_cache.XXXXXX)
+trap 'rm -f "$CACHE_FILE"' EXIT
+
+# Run a single, combined regex search over the source directory and store in the cache file.
+# Using -iE because some patterns required case-insensitivity previously.
+# The cache file will contain lines formatted as filename:line:content
+# shellcheck disable=SC2086
+grep $GREP_OPTS -iE "$COMBINED_PATTERN" "$SOURCE_DIR" > "$CACHE_FILE" 2>/dev/null || true
+
 section() {
   echo
   echo "==== $1 ===="
   echo
 }
 
+# Second pass: execute searches against the cache file
 run_grep() {
   local pattern="$1"
-  # shellcheck disable=SC2086
-  grep $GREP_OPTS -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
+  local extra_opts=""
+  if [[ "$#" -gt 1 ]]; then
+    extra_opts="$1"
+    pattern="$2"
+  fi
+
+  # Search against the cache file.
+  # We constraint the regex to only search the content part after filename:line:
+  if [[ -n "$extra_opts" ]]; then
+    grep $extra_opts -E ":[0-9]+:.*($pattern)" "$CACHE_FILE" 2>/dev/null || true
+  else
+    grep -E ":[0-9]+:.*($pattern)" "$CACHE_FILE" 2>/dev/null || true
+  fi
 }
 
-# --- Retrofit ---
+# --- Execution Phase ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_RETROFIT" == true ]]; then
   section "Retrofit Annotations"
   run_grep '@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\('
@@ -82,7 +145,6 @@ if [[ "$SEARCH_ALL" == true || "$SEARCH_RETROFIT" == true ]]; then
   run_grep '(baseUrl|base_url)\s*\('
 fi
 
-# --- OkHttp ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_OKHTTP" == true ]]; then
   section "OkHttp Request Building"
   run_grep '(Request\.Builder|HttpUrl|\.newCall|\.enqueue|addInterceptor|addNetworkInterceptor)'
@@ -90,13 +152,11 @@ if [[ "$SEARCH_ALL" == true || "$SEARCH_OKHTTP" == true ]]; then
   run_grep '(\.url\s*\(|\.addQueryParameter|\.addPathSegment|\.scheme\s*\(|\.host\s*\()'
 fi
 
-# --- Volley ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_VOLLEY" == true ]]; then
   section "Volley Requests"
   run_grep '(StringRequest|JsonObjectRequest|JsonArrayRequest|ImageRequest|RequestQueue|Volley\.newRequestQueue)'
 fi
 
-# --- Hardcoded URLs ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_URLS" == true ]]; then
   section "Hardcoded URLs (http:// and https://)"
   run_grep '"https?://[^"]+'
@@ -106,7 +166,6 @@ if [[ "$SEARCH_ALL" == true || "$SEARCH_URLS" == true ]]; then
   run_grep '(loadUrl|loadData|evaluateJavascript|addJavascriptInterface|WebViewClient|WebChromeClient)'
 fi
 
-# --- Auth patterns ---
 if [[ "$SEARCH_ALL" == true || "$SEARCH_AUTH" == true ]]; then
   section "Authentication & API Keys"
   run_grep -i '(api[_-]?key|auth[_-]?token|bearer|authorization|x-api-key|client[_-]?secret|access[_-]?token)'
